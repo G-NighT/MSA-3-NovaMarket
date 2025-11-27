@@ -1,0 +1,52 @@
+@startuml Saga-Sequence-Success
+
+title Saga оформления заказа – успешный сценарий
+
+actor MobileApp as app
+
+participant "API Gateway" as gw
+participant "Order Service" as order
+participant "Inventory Service" as inventory
+participant "Payment Service" as payment
+participant "Delivery Service" as delivery
+participant "Notification Service" as notif
+participant "Event Bus (Kafka)" as bus
+participant "Payment Gateway" as paygw
+participant "Logistics Provider" as logi
+
+app -> gw : POST /orders (данные корзины, адрес, способ оплаты)
+gw -> order : createOrder(...)
+order --> gw : 201 Created (orderId, статус=CREATED)
+
+order -> bus : Event OrderCreated
+bus -> inventory : OrderCreated
+bus -> notif : OrderCreated
+
+inventory -> inventory : Проверка и резервирование остатков
+inventory -> bus : Event StockReserved
+bus -> order : StockReserved
+bus -> payment : StockReserved
+
+payment -> bus : Event PaymentRequested
+bus -> notif : PaymentRequested
+
+payment -> paygw : charge(orderId, сумма, способ оплаты)
+paygw --> payment : payment ok
+
+payment -> bus : Event PaymentSucceeded
+bus -> order : PaymentSucceeded
+bus -> delivery : PaymentSucceeded
+bus -> notif : PaymentSucceeded
+
+delivery -> logi : Создать заявку на доставку
+logi --> delivery : trackingNumber, ok
+
+delivery -> bus : Event ShipmentCreated
+bus -> order : ShipmentCreated
+bus -> notif : ShipmentCreated
+
+delivery -> bus : Event ShipmentStatusUpdated (DELIVERED)
+bus -> order : ShipmentStatusUpdated (DELIVERED)
+bus -> notif : ShipmentStatusUpdated (DELIVERED)
+
+@enduml

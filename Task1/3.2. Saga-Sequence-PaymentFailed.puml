@@ -1,0 +1,47 @@
+@startuml Saga-Sequence-PaymentFailed
+
+title Saga оформления заказа – ошибка оплаты и компенсация
+
+actor MobileApp as app
+
+participant "API Gateway" as gw
+participant "Order Service" as order
+participant "Inventory Service" as inventory
+participant "Payment Service" as payment
+participant "Notification Service" as notif
+participant "Event Bus (Kafka)" as bus
+participant "Payment Gateway" as paygw
+
+app -> gw : POST /orders (данные корзины, адрес, способ оплаты)
+gw -> order : createOrder(...)
+order --> gw : 201 Created (orderId, статус=CREATED)
+
+order -> bus : Event OrderCreated
+bus -> inventory : OrderCreated
+bus -> notif : OrderCreated
+
+inventory -> inventory : Проверка и резервирование остатков
+inventory -> bus : Event StockReserved
+bus -> order : StockReserved
+bus -> payment : StockReserved
+
+payment -> paygw : charge(orderId, сумма, способ оплаты)
+paygw --> payment : payment failed (нет средств)
+
+payment -> bus : Event PaymentFailed
+bus -> order : PaymentFailed
+bus -> notif : PaymentFailed
+
+' решение о компенсации
+order -> bus : Event OrderCancelledDueToPayment
+bus -> inventory : OrderCancelledDueToPayment
+bus -> notif : OrderCancelledDueToPayment
+
+inventory -> bus : Event StockReleased
+bus -> order : StockReleased
+
+' если деньги всё-таки были заблокированы
+payment -> bus : Event PaymentRefundRequested
+bus -> notif : PaymentRefundRequested
+
+@enduml

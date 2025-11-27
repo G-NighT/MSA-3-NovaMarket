@@ -1,0 +1,68 @@
+@startuml C2-NovaMarket-OrderHistory
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+left to right direction
+
+title NovaMarket – C2 (история заказов, CQRS)
+
+Person(customer, "Покупатель", "Мобильное приложение NovaMarket")
+
+System_Boundary(nova, "NovaMarket Platform") {
+    Container(nginx, "API Gateway", "NGINX", "Единая точка входа, маршрутизация HTTP-запросов от клиентов к микросервисам")
+
+    ' Основные бизнес-сервисы (command side)
+    Container(catalog, "Catalog Service", "Kotlin/Spring Boot", "Каталог товаров, карточки, фильтрация, отзывы")
+    Container(cart, "Cart Service", "Kotlin/Spring Boot", "Корзина покупателя, состав заказа до оформления")
+    Container(order, "Order Service", "Kotlin/Spring Boot", "Создание заказов, управление статусами, источник domain-событий по заказам")
+    Container(inventory, "Inventory Service", "Kotlin/Spring Boot", "Проверка наличия и резервирование товаров")
+    Container(payment, "Payment Service", "Kotlin/Spring Boot", "Обработка платежей, интеграция с платежным шлюзом")
+    Container(delivery, "Delivery Service", "Kotlin/Spring Boot", "Формирование и трекинг заявок на доставку у логистического провайдера")
+    Container(notification, "Notification Service", "Kotlin/Spring Boot", "Отправка уведомлений покупателям и продавцам")
+
+    ' Новый read-сервис для агрегированных данных
+    Container(orderHistory, "Order History Query Service", "Kotlin/Spring Boot", "CQRS read-модель истории заказов. Отдаёт агрегированные данные по одному запросу")
+
+    ContainerDb(orderHistoryDb, "Order History Read DB", "NoSQL/SQL", "Денормализованное хранилище истории заказов, оптимизированное под чтение")
+
+    ' Event bus / topics
+    ContainerDb(kafkaOrders, "order-events", "Kafka topic", "События жизненного цикла заказов")
+    ContainerDb(kafkaPayments, "payment-events", "Kafka topic", "События жизненного цикла платежей")
+    ContainerDb(kafkaDelivery, "delivery-events", "Kafka topic", "События доставки заказов")
+}
+
+System_Ext(paymentGateway, "Платежный шлюз", "Внешний провайдер платежей")
+System_Ext(deliveryProvider, "Логистический провайдер", "Внешняя служба доставки")
+System_Ext(pushEmailSms, "Каналы уведомлений", "Push / Email / SMS")
+
+' Клиент и API Gateway
+Rel(customer, nginx, "HTTP/REST (мобильное приложение)")
+Rel(nginx, catalog, "REST: каталог, карточки")
+Rel(nginx, cart, "REST: управление корзиной")
+Rel(nginx, order, "REST: создание/просмотр статуса заказа")
+Rel(nginx, orderHistory, "REST: /me/orders, /me/orders/{id} (история покупок)")
+
+' Внешние синхронные интеграции
+Rel(payment, paymentGateway, "API платежного шлюза")
+Rel(delivery, deliveryProvider, "API логистического провайдера")
+Rel(notification, pushEmailSms, "Отправка push/e-mail/SMS")
+
+' Публикация событий (command side)
+Rel(order, kafkaOrders, "Публикует: OrderCreated, OrderStatusChanged, OrderCompleted, OrderCancelled", "Kafka")
+Rel(payment, kafkaPayments, "Публикует: PaymentSucceeded, PaymentFailed, PaymentRefunded", "Kafka")
+Rel(delivery, kafkaDelivery, "Публикует: ShipmentCreated, ShipmentStatusUpdated", "Kafka")
+
+' Read-модель подписывается на события
+Rel(kafkaOrders, orderHistory, "Потребляет события заказов", "Kafka")
+Rel(kafkaPayments, orderHistory, "Потребляет события платежей", "Kafka")
+Rel(kafkaDelivery, orderHistory, "Потребляет события доставки", "Kafka")
+
+Rel(orderHistory, orderHistoryDb, "Запись/чтение агрегированных данных истории заказов", "JDBC/ORM")
+
+' Существующие подписчики
+Rel(kafkaOrders, inventory, "Потребляет: OrderCreated и др.", "Kafka")
+Rel(kafkaOrders, notification, "Потребляет: OrderCreated, OrderCompleted, OrderCancelled", "Kafka")
+Rel(kafkaPayments, notification, "Потребляет: PaymentSucceeded, PaymentFailed", "Kafka")
+Rel(kafkaDelivery, notification, "Потребляет: ShipmentCreated, ShipmentStatusUpdated", "Kafka")
+
+@enduml
