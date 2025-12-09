@@ -1,0 +1,65 @@
+@startuml C2-NovaMarket
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+left to right direction
+
+title NovaMarket – C2 (Event-Driven микросервисная архитектура)
+
+Person(customer, "Покупатель", "Мобильное приложение NovaMarket")
+
+System_Boundary(nova, "NovaMarket Platform") {
+    Container(nginx, "API Gateway", "NGINX", "Единая точка входа, маршрутизация HTTP-запросов от клиентов к микросервисам")
+
+    Container(catalog, "Catalog Service", "Kotlin/Spring Boot", "Каталог товаров, карточки, фильтрация, отзывы")
+    Container(cart, "Cart Service", "Kotlin/Spring Boot", "Корзина покупателя, состав заказа до оформления")
+    Container(order, "Order Service", "Kotlin/Spring Boot", "Создание заказов, управление статусами, история заказов")
+
+    Container(inventory, "Inventory Service", "Kotlin/Spring Boot", "Проверка наличия и резервирование товаров на складе")
+    Container(payment, "Payment Service", "Kotlin/Spring Boot", "Обработка платежей, интеграция с платежным шлюзом, работа с привязанной картой")
+    Container(delivery, "Delivery Service", "Kotlin/Spring Boot", "Формирование и трекинг заявок на доставку у логистического провайдера")
+
+    Container(notification, "Notification Service", "Kotlin/Spring Boot", "Отправка уведомлений покупателям и продавцам (push/email/SMS)")
+
+    ' Event bus / topics
+    ContainerDb(kafkaOrders, "order-events", "Kafka topic", "События жизненного цикла заказов")
+    ContainerDb(kafkaInventory, "inventory-events", "Kafka topic", "События резервирования/освобождения остатков")
+    ContainerDb(kafkaPayments, "payment-events", "Kafka topic", "События жизненного цикла платежа")
+    ContainerDb(kafkaDelivery, "delivery-events", "Kafka topic", "События, связанные с доставкой заказа")
+}
+
+System_Ext(paymentGateway, "Платежный шлюз", "Внешний провайдер платежей")
+System_Ext(deliveryProvider, "Логистический провайдер", "Внешняя служба доставки")
+System_Ext(pushEmailSms, "Каналы уведомлений", "Push / Email / SMS")
+
+' Взаимодействие клиентов
+Rel(customer, nginx, "HTTP/REST (мобильное приложение)")
+
+Rel(nginx, catalog, "REST: каталог, карточки")
+Rel(nginx, cart, "REST: управление корзиной")
+Rel(nginx, order, "REST: оформление и просмотр заказов")
+
+' Синхронные интеграции с внешними системами
+Rel(payment, paymentGateway, "API платежного шлюза")
+Rel(delivery, deliveryProvider, "API логистического провайдера")
+Rel(notification, pushEmailSms, "Отправка push/e-mail/SMS")
+
+' Публикация и потребление событий (вариант 1: через топики)
+Rel(order, kafkaOrders, "Публикует: OrderCreated, OrderCancelled, OrderCompleted", "Kafka")
+Rel(kafkaOrders, inventory, "Потребляет: OrderCreated", "Kafka")
+Rel(kafkaOrders, notification, "Потребляет: OrderCreated, OrderCancelled, OrderCompleted", "Kafka")
+
+Rel(inventory, kafkaInventory, "Публикует: StockReserved, StockReservationFailed, StockReleased", "Kafka")
+Rel(kafkaInventory, order, "Потребляет: StockReserved, StockReservationFailed, StockReleased", "Kafka")
+Rel(kafkaInventory, payment, "Потребляет: StockReserved", "Kafka")
+
+Rel(payment, kafkaPayments, "Публикует: PaymentRequested, PaymentSucceeded, PaymentFailed, PaymentTimedOut", "Kafka")
+Rel(kafkaPayments, order, "Потребляет: PaymentSucceeded, PaymentFailed, PaymentTimedOut", "Kafka")
+Rel(kafkaPayments, delivery, "Потребляет: PaymentSucceeded", "Kafka")
+Rel(kafkaPayments, notification, "Потребляет: PaymentSucceeded, PaymentFailed, PaymentTimedOut", "Kafka")
+
+Rel(delivery, kafkaDelivery, "Публикует: ShipmentRequested, ShipmentCreated, ShipmentStatusUpdated, ShipmentCreationFailed", "Kafka")
+Rel(kafkaDelivery, order, "Потребляет: ShipmentCreated, ShipmentStatusUpdated, ShipmentCreationFailed", "Kafka")
+Rel(kafkaDelivery, notification, "Потребляет: ShipmentCreated, ShipmentStatusUpdated, ShipmentCreationFailed", "Kafka")
+
+@enduml
